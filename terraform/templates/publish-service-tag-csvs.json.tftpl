@@ -1,16 +1,20 @@
 {
-  "description": "One CSV per requested service tag: filter the discovery payload to the tag, turn its address prefixes into rows, and PUT the blob with the workflow's identity. Sequential to keep run history readable.",
+  "description": "One feed per requested service tag: all/ipv4/ipv6 variants, CSV and JSON, latest and dated history paths. Sequential to keep run history readable.",
   "type": "Foreach",
   "foreach": "@parameters('service_tags')",
   "runtimeConfiguration": {
-    "concurrency": { "repetitions": 1 }
+    "concurrency": {
+      "repetitions": 1
+    }
   },
   "runAfter": {
-    "${get_service_tags_action}": ["Succeeded"]
+    "${get_service_tags_action}": [
+      "Succeeded"
+    ]
   },
   "actions": {
     "Filter_-_The_requested_tag": {
-      "description": "The discovery payload entry whose name matches this tag, case-insensitively: regional tag casing is inconsistent across families (AzureCloud.uksouth but Storage.UKSouth), so exact matching would silently miss. Empty when the tag does not exist, which the coalesce below turns into an empty CSV rather than a failed run.",
+      "description": "The discovery entry matching this tag, case-insensitively: regional tag casing is inconsistent across families (AzureCloud.uksouth but Storage.UKSouth). Empty when the tag does not exist, which becomes empty files rather than a failed run.",
       "type": "Query",
       "inputs": {
         "from": "@body('${get_service_tags_action}')?['values']",
@@ -18,58 +22,162 @@
       },
       "runAfter": {}
     },
-    "Create_CSV_-_Tag_address_prefixes": {
-      "description": "The tag's address prefixes (IPv4 and IPv6) as one CSV row each.",
-      "type": "Table",
-      "inputs": {
-        "from": "@coalesce(first(body('Filter_-_The_requested_tag'))?['properties']?['addressPrefixes'], json('[]'))",
-        "format": "CSV",
-        "columns": [
-          { "header": "AddressPrefix", "value": "@item()" }
+    "For_each_-_Tag_variant": {
+      "description": "The all, ipv4, and ipv6 variants, split on the colon only IPv6 notation contains, each as CSV and JSON at the stable latest path and a dated history copy.",
+      "type": "Foreach",
+      "foreach": "@createArray('all', 'ipv4', 'ipv6')",
+      "runtimeConfiguration": {
+        "concurrency": {
+          "repetitions": 1
+        }
+      },
+      "runAfter": {
+        "Filter_-_The_requested_tag": [
+          "Succeeded"
         ]
       },
-      "runAfter": {
-        "Filter_-_The_requested_tag": ["Succeeded"]
-      }
-    },
-    "HTTP_-_Put_the_tag_CSV_blob": {
-      "description": "Writes azure-service-tags/<tag>.csv, overwriting last week's feed. The account firewall admits this workflow through its resource instance rule.",
-      "type": "Http",
-      "inputs": {
-        "method": "PUT",
-        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}.csv",
-        "headers": {
-          "x-ms-blob-type": "BlockBlob",
-          "x-ms-version": "2021-08-06",
-          "Content-Type": "text/csv"
+      "actions": {
+        "Query_-_Tag_variant_rows": {
+          "description": "This variant's values.",
+          "type": "Query",
+          "inputs": {
+            "from": "@coalesce(first(body('Filter_-_The_requested_tag'))?['properties']?['addressPrefixes'], json('[]'))",
+            "where": "@if(equals(items('For_each_-_Tag_variant'), 'ipv6'), contains(item(), ':'), if(equals(items('For_each_-_Tag_variant'), 'ipv4'), and(not(empty(item())), not(contains(item(), ':'))), true))"
+          },
+          "runAfter": {}
         },
-        "body": "@body('Create_CSV_-_Tag_address_prefixes')",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
-      },
-      "runAfter": {
-        "Create_CSV_-_Tag_address_prefixes": ["Succeeded"]
-      }
-    }    ,
-    "HTTP_-_Put_the_tag_JSON_blob": {
-      "description": "Writes azure-service-tags/<tag>.json: the raw prefix array, source-shaped.",
-      "type": "Http",
-      "inputs": {
-        "method": "PUT",
-        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}.json",
-        "headers": {
-          "x-ms-blob-type": "BlockBlob",
-          "x-ms-version": "2021-08-06",
-          "Content-Type": "application/json"
+        "Create_CSV_-_Tag_rows": {
+          "description": "The variant's values as one CSV row each.",
+          "type": "Table",
+          "inputs": {
+            "from": "@body('Query_-_Tag_variant_rows')",
+            "format": "CSV",
+            "columns": [
+              {
+                "header": "AddressPrefix",
+                "value": "@item()"
+              }
+            ]
+          },
+          "runAfter": {
+            "Query_-_Tag_variant_rows": [
+              "Succeeded"
+            ]
+          }
         },
-        "body": "@coalesce(first(body('Filter_-_The_requested_tag'))?['properties']?['addressPrefixes'], json('[]'))",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
-      },
-      "runAfter": {
-        "HTTP_-_Put_the_tag_CSV_blob": ["Succeeded"]
+        "HTTP_-_Put_Tag_variant_CSV": {
+          "description": "The stable latest CSV, overwritten weekly.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}@{if(equals(items('For_each_-_Tag_variant'), 'all'), '', concat('-', items('For_each_-_Tag_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_Tag_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "Create_CSV_-_Tag_rows": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_Tag_variant_JSON": {
+          "description": "The stable latest JSON: the raw value array.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}@{if(equals(items('For_each_-_Tag_variant'), 'all'), '', concat('-', items('For_each_-_Tag_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_Tag_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_Tag_variant_CSV": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_Tag_variant_dated_CSV": {
+          "description": "The dated history CSV, never overwritten.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/azure-service-tags/@{items('${self_name}')}@{if(equals(items('For_each_-_Tag_variant'), 'all'), '', concat('-', items('For_each_-_Tag_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_Tag_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_Tag_variant_JSON": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_Tag_variant_dated_JSON": {
+          "description": "The dated history JSON.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/azure-service-tags/@{items('${self_name}')}@{if(equals(items('For_each_-_Tag_variant'), 'all'), '', concat('-', items('For_each_-_Tag_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_Tag_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_Tag_variant_dated_CSV": [
+              "Succeeded"
+            ]
+          }
+        }
       }
     }
-
   }
 }

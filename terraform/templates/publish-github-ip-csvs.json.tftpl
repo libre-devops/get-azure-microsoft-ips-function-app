@@ -1,64 +1,170 @@
 {
-  "description": "One CSV per requested GitHub IP group: index the meta payload by the group name and turn its CIDR list into rows. An unknown group name produces an empty CSV rather than a failed run.",
+  "description": "One feed per requested GitHub IP group: all/ipv4/ipv6 variants, CSV and JSON, latest and dated history paths. Unknown group names produce empty files rather than failed runs.",
   "type": "Foreach",
   "foreach": "@parameters('github_ip_groups')",
   "runtimeConfiguration": {
-    "concurrency": { "repetitions": 1 }
+    "concurrency": {
+      "repetitions": 1
+    }
   },
   "runAfter": {
-    "${get_meta_action}": ["Succeeded"]
+    "${get_meta_action}": [
+      "Succeeded"
+    ]
   },
   "actions": {
-    "Create_CSV_-_Group_ip_ranges": {
-      "description": "The group's CIDR ranges (IPv4 and IPv6) as one CSV row each.",
-      "type": "Table",
-      "inputs": {
-        "from": "@coalesce(body('${get_meta_action}')?[items('${self_name}')], json('[]'))",
-        "format": "CSV",
-        "columns": [
-          { "header": "Cidr", "value": "@item()" }
-        ]
+    "For_each_-_GitHub_variant": {
+      "description": "The all, ipv4, and ipv6 variants, split on the colon only IPv6 notation contains, each as CSV and JSON at the stable latest path and a dated history copy.",
+      "type": "Foreach",
+      "foreach": "@createArray('all', 'ipv4', 'ipv6')",
+      "runtimeConfiguration": {
+        "concurrency": {
+          "repetitions": 1
+        }
       },
-      "runAfter": {}
-    },
-    "HTTP_-_Put_the_group_CSV_blob": {
-      "description": "Writes github/<group>.csv, overwriting last week's feed.",
-      "type": "Http",
-      "inputs": {
-        "method": "PUT",
-        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/github/@{items('${self_name}')}.csv",
-        "headers": {
-          "x-ms-blob-type": "BlockBlob",
-          "x-ms-version": "2021-08-06",
-          "Content-Type": "text/csv"
+      "runAfter": {},
+      "actions": {
+        "Query_-_GitHub_variant_rows": {
+          "description": "This variant's values.",
+          "type": "Query",
+          "inputs": {
+            "from": "@coalesce(body('${get_meta_action}')?[items('${self_name}')], json('[]'))",
+            "where": "@if(equals(items('For_each_-_GitHub_variant'), 'ipv6'), contains(item(), ':'), if(equals(items('For_each_-_GitHub_variant'), 'ipv4'), and(not(empty(item())), not(contains(item(), ':'))), true))"
+          },
+          "runAfter": {}
         },
-        "body": "@body('Create_CSV_-_Group_ip_ranges')",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
-      },
-      "runAfter": {
-        "Create_CSV_-_Group_ip_ranges": ["Succeeded"]
-      }
-    }    ,
-    "HTTP_-_Put_the_group_JSON_blob": {
-      "description": "Writes github/<group>.json: the raw CIDR array, source-shaped.",
-      "type": "Http",
-      "inputs": {
-        "method": "PUT",
-        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/github/@{items('${self_name}')}.json",
-        "headers": {
-          "x-ms-blob-type": "BlockBlob",
-          "x-ms-version": "2021-08-06",
-          "Content-Type": "application/json"
+        "Create_CSV_-_GitHub_rows": {
+          "description": "The variant's values as one CSV row each.",
+          "type": "Table",
+          "inputs": {
+            "from": "@body('Query_-_GitHub_variant_rows')",
+            "format": "CSV",
+            "columns": [
+              {
+                "header": "Cidr",
+                "value": "@item()"
+              }
+            ]
+          },
+          "runAfter": {
+            "Query_-_GitHub_variant_rows": [
+              "Succeeded"
+            ]
+          }
         },
-        "body": "@coalesce(body('${get_meta_action}')?[items('${self_name}')], json('[]'))",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
-      },
-      "runAfter": {
-        "HTTP_-_Put_the_group_CSV_blob": ["Succeeded"]
+        "HTTP_-_Put_GitHub_variant_CSV": {
+          "description": "The stable latest CSV, overwritten weekly.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/github/@{items('${self_name}')}@{if(equals(items('For_each_-_GitHub_variant'), 'all'), '', concat('-', items('For_each_-_GitHub_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_GitHub_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "Create_CSV_-_GitHub_rows": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_GitHub_variant_JSON": {
+          "description": "The stable latest JSON: the raw value array.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/github/@{items('${self_name}')}@{if(equals(items('For_each_-_GitHub_variant'), 'all'), '', concat('-', items('For_each_-_GitHub_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_GitHub_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_GitHub_variant_CSV": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_GitHub_variant_dated_CSV": {
+          "description": "The dated history CSV, never overwritten.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/github/@{items('${self_name}')}@{if(equals(items('For_each_-_GitHub_variant'), 'all'), '', concat('-', items('For_each_-_GitHub_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_GitHub_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_GitHub_variant_JSON": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_GitHub_variant_dated_JSON": {
+          "description": "The dated history JSON.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/github/@{items('${self_name}')}@{if(equals(items('For_each_-_GitHub_variant'), 'all'), '', concat('-', items('For_each_-_GitHub_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_GitHub_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_GitHub_variant_dated_CSV": [
+              "Succeeded"
+            ]
+          }
+        }
       }
     }
-
   }
 }

@@ -42,12 +42,25 @@ system-assigned managed identity and no secrets anywhere:
   entry names a url, the payload property holding the array, and (for object arrays) which field
   is the CIDR plus an optional filter. Every entry lands at `custom/<key>.csv` and `.json`.
 
-Every feed is written twice: `<name>.csv` (flattened, one value per row) and `<name>.json`
-(source-shaped, full fidelity; the M365 JSON keeps the proper ips, urls, and port arrays the CSV
-has to semicolon-join). Azure **Table storage is deliberately not offered**: tables have no bulk
-write, so a weekly run would mean tens of thousands of sequential entity inserts (AzureCloud alone
-is ~15,000 prefixes) for a row-query capability IP-feed consumers rarely want; if row-level
-querying ever matters, ingest the blobs into Log Analytics or ADX instead.
+Every flat feed comes in three variants: the combined file (`<name>.csv`/`.json`), plus
+`<name>-ipv4` and `<name>-ipv6` splits (the family test is the colon only IPv6 notation contains).
+The M365 service areas additionally keep their full-fidelity endpoint-set files
+(`m365/<area>.csv`/`.json`, ports and urls intact) alongside flat `m365/<area>-ips[-ipv4|-ipv6]`
+lists for firewall consumption, and object custom feeds keep a `-source.json` with the unplucked
+rows.
+
+Every file is written twice per run: the stable latest path (overwritten weekly, stable URLs to
+point tooling at) and a dated history copy under `history/<yyyy-MM-dd>/...` that is never
+overwritten. One date stamp is composed per run, so a run crossing midnight stays consistent.
+
+For the long term, the whole container is **object-replicated to a second archive storage account**
+(`enable_archive_replication`, on by default): every write lands there minutes later without the
+workflow knowing, and the archive account's lifecycle policy tiers the history down (cool at 30
+days, archive at 180) while the latest files stay hot. Versioning and change feed are enabled on
+both accounts, as object replication requires. Azure **Table storage is deliberately not offered**:
+tables have no bulk write, so a weekly run would mean tens of thousands of sequential entity
+inserts (AzureCloud alone is ~15,000 prefixes) for a row-query capability IP-feed consumers rarely
+want; if row-level querying ever matters, ingest the blobs into Log Analytics or ADX instead.
 
 The workflow runs every Monday at 06:00 UTC and overwrites last week's feeds. The cadence matches
 the sources: Azure service tags publish weekly, the M365 endpoint sets version monthly (start of
@@ -121,6 +134,14 @@ then browse the container from the `container_url` output.
       value_property  = "ip_prefix"
       filter_property = "service"
       filter_equals   = "EC2"
+    }
+
+    # AWS publishes IPv6 in a separate collection, so it is its own entry (the -ipv6 variants of
+    # the entries above are correctly empty)
+    aws-all-v6 = {
+      url            = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+      collection     = "ipv6_prefixes"
+      value_property = "ipv6_prefix"
     }
 
     # Zscaler recommended hub ranges (swap zscaler.net for your cloud: zscalertwo.net, zscloud.net ...)

@@ -29,6 +29,12 @@ variable "custom_feeds" {
   }
 }
 
+variable "enable_archive_replication" {
+  description = "Replicate the feeds container to a second archive storage account with object replication, and tier its history there (cool at 30 days, archive at 180). Versioning and change feed are enabled on both accounts, as object replication requires."
+  type        = bool
+  default     = true
+}
+
 variable "discovery_location" {
   description = "Azure region used by the service tag discovery API call (the API returns the full public cloud tag set regardless; the location only anchors the request)."
   type        = string

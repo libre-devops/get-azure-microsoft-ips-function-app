@@ -1,12 +1,16 @@
 {
-  "description": "One CSV per M365 service area: filter the endpoint sets to the area and write one row per endpoint set, with the ips and urls collections semicolon-joined inside their columns so the grouping Microsoft publishes is preserved.",
+  "description": "One feed family per M365 service area: the endpoint sets in full fidelity (CSV and JSON, latest and dated), plus flat ip lists in all/ipv4/ipv6 variants for firewall consumption.",
   "type": "Foreach",
   "foreach": "@parameters('m365_service_areas')",
   "runtimeConfiguration": {
-    "concurrency": { "repetitions": 1 }
+    "concurrency": {
+      "repetitions": 1
+    }
   },
   "runAfter": {
-    "${get_endpoints_action}": ["Succeeded"]
+    "${get_endpoints_action}": [
+      "Succeeded"
+    ]
   },
   "actions": {
     "Filter_-_Endpoint_sets_for_this_area": {
@@ -19,27 +23,50 @@
       "runAfter": {}
     },
     "Create_CSV_-_Area_endpoint_sets": {
-      "description": "One row per endpoint set: id, category, required flag, ips, urls, and ports.",
+      "description": "One row per endpoint set: id, category, required flag, ips, urls, and ports, collections semicolon-joined so Microsoft's grouping survives.",
       "type": "Table",
       "inputs": {
         "from": "@body('Filter_-_Endpoint_sets_for_this_area')",
         "format": "CSV",
         "columns": [
-          { "header": "Id", "value": "@item()?['id']" },
-          { "header": "Category", "value": "@item()?['category']" },
-          { "header": "Required", "value": "@item()?['required']" },
-          { "header": "Ips", "value": "@join(coalesce(item()?['ips'], json('[]')), ';')" },
-          { "header": "Urls", "value": "@join(coalesce(item()?['urls'], json('[]')), ';')" },
-          { "header": "TcpPorts", "value": "@coalesce(item()?['tcpPorts'], '')" },
-          { "header": "UdpPorts", "value": "@coalesce(item()?['udpPorts'], '')" }
+          {
+            "header": "Id",
+            "value": "@item()?['id']"
+          },
+          {
+            "header": "Category",
+            "value": "@item()?['category']"
+          },
+          {
+            "header": "Required",
+            "value": "@item()?['required']"
+          },
+          {
+            "header": "Ips",
+            "value": "@join(coalesce(item()?['ips'], json('[]')), ';')"
+          },
+          {
+            "header": "Urls",
+            "value": "@join(coalesce(item()?['urls'], json('[]')), ';')"
+          },
+          {
+            "header": "TcpPorts",
+            "value": "@coalesce(item()?['tcpPorts'], '')"
+          },
+          {
+            "header": "UdpPorts",
+            "value": "@coalesce(item()?['udpPorts'], '')"
+          }
         ]
       },
       "runAfter": {
-        "Filter_-_Endpoint_sets_for_this_area": ["Succeeded"]
+        "Filter_-_Endpoint_sets_for_this_area": [
+          "Succeeded"
+        ]
       }
     },
-    "HTTP_-_Put_the_area_CSV_blob": {
-      "description": "Writes m365/<service area>.csv, overwriting last week's feed.",
+    "HTTP_-_Put_area_sets_CSV": {
+      "description": "The stable latest endpoint-set CSV.",
       "type": "Http",
       "inputs": {
         "method": "PUT",
@@ -50,15 +77,24 @@
           "Content-Type": "text/csv"
         },
         "body": "@body('Create_CSV_-_Area_endpoint_sets')",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://storage.azure.com/"
+        },
+        "retryPolicy": {
+          "type": "fixed",
+          "count": 3,
+          "interval": "PT30S"
+        }
       },
       "runAfter": {
-        "Create_CSV_-_Area_endpoint_sets": ["Succeeded"]
+        "Create_CSV_-_Area_endpoint_sets": [
+          "Succeeded"
+        ]
       }
-    }    ,
-    "HTTP_-_Put_the_area_JSON_blob": {
-      "description": "Writes m365/<area>.json: the endpoint sets exactly as Microsoft publishes them, full fidelity (proper ips, urls, and port arrays).",
+    },
+    "HTTP_-_Put_area_sets_JSON": {
+      "description": "The stable latest endpoint-set JSON, exactly as Microsoft publishes them.",
       "type": "Http",
       "inputs": {
         "method": "PUT",
@@ -69,13 +105,247 @@
           "Content-Type": "application/json"
         },
         "body": "@body('Filter_-_Endpoint_sets_for_this_area')",
-        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
-        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://storage.azure.com/"
+        },
+        "retryPolicy": {
+          "type": "fixed",
+          "count": 3,
+          "interval": "PT30S"
+        }
       },
       "runAfter": {
-        "HTTP_-_Put_the_area_CSV_blob": ["Succeeded"]
+        "HTTP_-_Put_area_sets_CSV": [
+          "Succeeded"
+        ]
+      }
+    },
+    "HTTP_-_Put_area_sets_dated_CSV": {
+      "description": "The dated history endpoint-set CSV.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/m365/@{items('${self_name}')}.csv",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "text/csv"
+        },
+        "body": "@body('Create_CSV_-_Area_endpoint_sets')",
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://storage.azure.com/"
+        },
+        "retryPolicy": {
+          "type": "fixed",
+          "count": 3,
+          "interval": "PT30S"
+        }
+      },
+      "runAfter": {
+        "HTTP_-_Put_area_sets_JSON": [
+          "Succeeded"
+        ]
+      }
+    },
+    "HTTP_-_Put_area_sets_dated_JSON": {
+      "description": "The dated history endpoint-set JSON.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/m365/@{items('${self_name}')}.json",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "application/json"
+        },
+        "body": "@body('Filter_-_Endpoint_sets_for_this_area')",
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://storage.azure.com/"
+        },
+        "retryPolicy": {
+          "type": "fixed",
+          "count": 3,
+          "interval": "PT30S"
+        }
+      },
+      "runAfter": {
+        "HTTP_-_Put_area_sets_dated_CSV": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Select_-_Joined_ips_per_set": {
+      "description": "Each set's ips joined, ready for the flatten below (join then split turns the arrays of arrays into one flat list without loops).",
+      "type": "Select",
+      "inputs": {
+        "from": "@body('Filter_-_Endpoint_sets_for_this_area')",
+        "select": "@join(coalesce(item()?['ips'], json('[]')), ';')"
+      },
+      "runAfter": {
+        "HTTP_-_Put_area_sets_dated_JSON": [
+          "Succeeded"
+        ]
+      }
+    },
+    "For_each_-_M365_ip_variant": {
+      "description": "The all, ipv4, and ipv6 variants, split on the colon only IPv6 notation contains, each as CSV and JSON at the stable latest path and a dated history copy.",
+      "type": "Foreach",
+      "foreach": "@createArray('all', 'ipv4', 'ipv6')",
+      "runtimeConfiguration": {
+        "concurrency": {
+          "repetitions": 1
+        }
+      },
+      "runAfter": {
+        "Select_-_Joined_ips_per_set": [
+          "Succeeded"
+        ]
+      },
+      "actions": {
+        "Query_-_M365_ip_variant_rows": {
+          "description": "This variant's values.",
+          "type": "Query",
+          "inputs": {
+            "from": "@split(join(body('Select_-_Joined_ips_per_set'), ';'), ';')",
+            "where": "@if(equals(items('For_each_-_M365_ip_variant'), 'ipv6'), contains(item(), ':'), if(equals(items('For_each_-_M365_ip_variant'), 'ipv4'), and(not(empty(item())), not(contains(item(), ':'))), not(empty(item()))))"
+          },
+          "runAfter": {}
+        },
+        "Create_CSV_-_M365_ip_rows": {
+          "description": "The variant's values as one CSV row each.",
+          "type": "Table",
+          "inputs": {
+            "from": "@body('Query_-_M365_ip_variant_rows')",
+            "format": "CSV",
+            "columns": [
+              {
+                "header": "Ip",
+                "value": "@item()"
+              }
+            ]
+          },
+          "runAfter": {
+            "Query_-_M365_ip_variant_rows": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_M365_ip_variant_CSV": {
+          "description": "The stable latest CSV, overwritten weekly.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/m365/@{items('${self_name}')}-ips@{if(equals(items('For_each_-_M365_ip_variant'), 'all'), '', concat('-', items('For_each_-_M365_ip_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_M365_ip_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "Create_CSV_-_M365_ip_rows": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_M365_ip_variant_JSON": {
+          "description": "The stable latest JSON: the raw value array.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/m365/@{items('${self_name}')}-ips@{if(equals(items('For_each_-_M365_ip_variant'), 'all'), '', concat('-', items('For_each_-_M365_ip_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_M365_ip_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_M365_ip_variant_CSV": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_M365_ip_variant_dated_CSV": {
+          "description": "The dated history CSV, never overwritten.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/m365/@{items('${self_name}')}-ips@{if(equals(items('For_each_-_M365_ip_variant'), 'all'), '', concat('-', items('For_each_-_M365_ip_variant')))}.csv",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "text/csv"
+            },
+            "body": "@body('Create_CSV_-_M365_ip_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_M365_ip_variant_JSON": [
+              "Succeeded"
+            ]
+          }
+        },
+        "HTTP_-_Put_M365_ip_variant_dated_JSON": {
+          "description": "The dated history JSON.",
+          "type": "Http",
+          "inputs": {
+            "method": "PUT",
+            "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/history/@{outputs('${run_date_action}')}/m365/@{items('${self_name}')}-ips@{if(equals(items('For_each_-_M365_ip_variant'), 'all'), '', concat('-', items('For_each_-_M365_ip_variant')))}.json",
+            "headers": {
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06",
+              "Content-Type": "application/json"
+            },
+            "body": "@body('Query_-_M365_ip_variant_rows')",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com/"
+            },
+            "retryPolicy": {
+              "type": "fixed",
+              "count": 3,
+              "interval": "PT30S"
+            }
+          },
+          "runAfter": {
+            "HTTP_-_Put_M365_ip_variant_dated_CSV": [
+              "Succeeded"
+            ]
+          }
+        }
       }
     }
-
   }
 }

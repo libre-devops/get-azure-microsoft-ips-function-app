@@ -11,11 +11,12 @@
 # module with a resource instance rule for the workflow, so the account stays deny-by-default while
 # this one workflow may write. Blocks are ordered by dependency, top to bottom.
 locals {
-  location  = lookup(var.regions, var.loc, "uksouth")
-  rg_name   = "rg-${var.short}-${var.loc}-${var.env}-ips-001"
-  wf_name   = "logic-${var.short}-${var.loc}-${var.env}-ips-weekly-001"
-  sa_name   = "st${var.short}${var.loc}ips${substr(sha1(data.azurerm_subscription.current.subscription_id), 0, 6)}"
-  container = "ip-feeds"
+  location        = lookup(var.regions, var.loc, "uksouth")
+  rg_name         = "rg-${var.short}-${var.loc}-${var.env}-ips-001"
+  wf_name         = "logic-${var.short}-${var.loc}-${var.env}-ips-weekly-001"
+  sa_name         = "st${var.short}${var.loc}ips${substr(sha1(data.azurerm_subscription.current.subscription_id), 0, 6)}"
+  archive_sa_name = "st${var.short}${var.loc}iparc${substr(sha1(data.azurerm_subscription.current.subscription_id), 0, 6)}"
+  container       = "ip-feeds"
 
   custom_role_name = "Service Tag Reader (${var.short}-${var.loc}-${var.env})"
 
@@ -27,6 +28,13 @@ locals {
 data "azurerm_subscription" "current" {}
 
 data "azurerm_client_config" "current" {}
+
+# The applier's egress public IP, allow-listed on both accounts so the human who deploys can also
+# read the feeds (the workflow itself gets through on its resource instance rule, not an IP).
+module "get_ip" {
+  source  = "libre-devops/get-ip-address/external"
+  version = "~> 4.0"
+}
 
 module "tags" {
   source  = "libre-devops/tags/azurerm"
@@ -55,21 +63,80 @@ module "storage" {
   location          = local.location
   tags              = module.tags.tags
 
-  storage_accounts = {
-    (local.sa_name) = {
-      manage_network_rules = false
-      # No keys, enforced rather than aspirational: the workflow writes with its managed identity,
-      # humans read via Entra RBAC, and nothing can fall back to a shared key or SAS.
-      shared_access_key_enabled       = false
-      default_to_oauth_authentication = true
-    }
-  }
+  storage_accounts = merge(
+    {
+      (local.sa_name) = {
+        manage_network_rules = false
+        # No keys, enforced rather than aspirational: the workflow writes with its managed identity,
+        # humans read via Entra RBAC, and nothing can fall back to a shared key or SAS.
+        shared_access_key_enabled       = false
+        default_to_oauth_authentication = true
+        # Object replication requires versioning and change feed on the source.
+        blob_properties = {
+          versioning_enabled  = true
+          change_feed_enabled = true
+        }
+      }
+    },
+    var.enable_archive_replication ? {
+      (local.archive_sa_name) = {
+        # The long-term copy: object replication delivers every feed here, and the lifecycle tiers
+        # the dated history down (cool at 30 days, archive at 180) while latest stays hot.
+        shared_access_key_enabled       = false
+        default_to_oauth_authentication = true
+        network_rules = {
+          ip_rules = [module.get_ip.public_ip_address]
+        }
+        blob_properties = {
+          versioning_enabled  = true
+          change_feed_enabled = true
+        }
+        management_policy = {
+          rules = [
+            {
+              name    = "tier-history-down"
+              filters = { blob_types = ["blockBlob"], prefix_match = ["${local.container}/history/"] }
+              actions = {
+                base_blob = {
+                  tier_to_cool_after_days_since_modification_greater_than    = 30
+                  tier_to_archive_after_days_since_modification_greater_than = 180
+                }
+              }
+            }
+          ]
+        }
+      }
+    } : {}
+  )
 }
 
 resource "azurerm_storage_container" "feeds" {
   name                  = local.container
   storage_account_id    = module.storage.ids[local.sa_name]
   container_access_type = "private"
+}
+
+resource "azurerm_storage_container" "feeds_archive" {
+  count = var.enable_archive_replication ? 1 : 0
+
+  name                  = local.container
+  storage_account_id    = module.storage.ids[local.archive_sa_name]
+  container_access_type = "private"
+}
+
+# Blob object replication: every feed write lands in the archive account minutes later, giving the
+# long-term copy a life of its own (and its own lifecycle tiering) without the workflow knowing.
+resource "azurerm_storage_object_replication" "feeds" {
+  count = var.enable_archive_replication ? 1 : 0
+
+  source_storage_account_id      = module.storage.ids[local.sa_name]
+  destination_storage_account_id = module.storage.ids[local.archive_sa_name]
+
+  rules {
+    source_container_name      = azurerm_storage_container.feeds.name
+    destination_container_name = azurerm_storage_container.feeds_archive[0].name
+    copy_blobs_created_after   = "Everything"
+  }
 }
 
 module "logic_app_workflow" {
@@ -144,6 +211,7 @@ module "storage_network_rules" {
   network_rules = {
     "feeds" = {
       storage_account_id = module.storage.ids[local.sa_name]
+      ip_rules           = [module.get_ip.public_ip_address]
       private_link_access = [
         {
           endpoint_resource_id = module.logic_app_workflow.ids[local.wf_name]
@@ -215,6 +283,20 @@ resource "azurerm_logic_app_trigger_recurrence" "weekly" {
   }
 }
 
+resource "azurerm_logic_app_action_custom" "run_date" {
+  name         = "Compose_-_The_runs_date_stamp"
+  logic_app_id = module.logic_app_workflow.ids[local.wf_name]
+
+  body = jsonencode({
+    description = "One date stamp for the whole run, so every dated history path in this run agrees even across midnight."
+    type        = "Compose"
+    inputs      = "@{formatDateTime(utcNow(), 'yyyy-MM-dd')}"
+    runAfter    = {}
+  })
+
+  depends_on = [azurerm_logic_app_trigger_recurrence.weekly]
+}
+
 resource "azurerm_logic_app_action_custom" "get_service_tags" {
   name         = "HTTP_-_Get_every_Azure_service_tag"
   logic_app_id = module.logic_app_workflow.ids[local.wf_name]
@@ -229,10 +311,10 @@ resource "azurerm_logic_app_action_custom" "get_service_tags" {
       authentication = { type = "ManagedServiceIdentity", audience = "https://management.azure.com/" }
       retryPolicy    = { type = "fixed", count = 3, interval = "PT30S" }
     }
-    runAfter = {}
+    runAfter = {
+      (azurerm_logic_app_action_custom.run_date.name) = ["Succeeded"]
+    }
   })
-
-  depends_on = [azurerm_logic_app_trigger_recurrence.weekly]
 }
 
 resource "azurerm_logic_app_action_custom" "publish_tag_csvs" {
@@ -242,6 +324,7 @@ resource "azurerm_logic_app_action_custom" "publish_tag_csvs" {
   body = templatefile("${path.module}/templates/publish-service-tag-csvs.json.tftpl", {
     self_name               = "For_each_-_Publish_a_CSV_per_service_tag"
     get_service_tags_action = azurerm_logic_app_action_custom.get_service_tags.name
+    run_date_action         = azurerm_logic_app_action_custom.run_date.name
   })
 }
 
@@ -271,6 +354,7 @@ resource "azurerm_logic_app_action_custom" "publish_m365_csvs" {
   body = templatefile("${path.module}/templates/publish-m365-area-csvs.json.tftpl", {
     self_name            = "For_each_-_Publish_a_CSV_per_M365_service_area"
     get_endpoints_action = azurerm_logic_app_action_custom.get_m365_endpoints.name
+    run_date_action      = azurerm_logic_app_action_custom.run_date.name
   })
 }
 
@@ -303,6 +387,7 @@ resource "azurerm_logic_app_action_custom" "publish_github_csvs" {
   body = templatefile("${path.module}/templates/publish-github-ip-csvs.json.tftpl", {
     self_name       = "For_each_-_Publish_a_CSV_per_GitHub_ip_group"
     get_meta_action = azurerm_logic_app_action_custom.get_github_meta.name
+    run_date_action = azurerm_logic_app_action_custom.run_date.name
   })
 }
 
@@ -313,5 +398,6 @@ resource "azurerm_logic_app_action_custom" "publish_custom_feed_csvs" {
   body = templatefile("${path.module}/templates/publish-custom-feed-csvs.json.tftpl", {
     self_name        = "For_each_-_Publish_a_CSV_per_custom_feed"
     run_after_action = azurerm_logic_app_action_custom.publish_github_csvs.name
+    run_date_action  = azurerm_logic_app_action_custom.run_date.name
   })
 }
