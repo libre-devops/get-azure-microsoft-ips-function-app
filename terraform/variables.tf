@@ -1,3 +1,34 @@
+variable "custom_feeds" {
+  description = <<-EOT
+    The out-of-band extension point: any public JSON feed of IP ranges becomes its own CSV at
+    custom/<key>.csv without touching the workflow. Each feed needs the url and the collection
+    (the payload property holding the array). When the array holds objects, value_property picks
+    the CIDR field and filter_property/filter_equals optionally narrow the rows (AWS by service,
+    for example); when it holds plain strings (Zscaler), leave value_property empty. headers adds
+    request headers for feeds that demand them. See the README for ready-made AWS and Zscaler
+    entries.
+  EOT
+  type = map(object({
+    url             = string
+    collection      = string
+    value_property  = optional(string, "")
+    filter_property = optional(string, "")
+    filter_equals   = optional(string, "")
+    headers         = optional(map(string), {})
+  }))
+  default = {}
+
+  validation {
+    condition     = alltrue([for f in values(var.custom_feeds) : can(regex("^https://", f.url))])
+    error_message = "Every custom feed url must be https."
+  }
+
+  validation {
+    condition     = alltrue([for f in values(var.custom_feeds) : f.filter_property == "" || f.value_property != ""])
+    error_message = "A filter only makes sense on object feeds: set value_property when setting filter_property."
+  }
+}
+
 variable "discovery_location" {
   description = "Azure region used by the service tag discovery API call (the API returns the full public cloud tag set regardless; the location only anchors the request)."
   type        = string

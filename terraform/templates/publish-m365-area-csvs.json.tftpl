@@ -56,6 +56,26 @@
       "runAfter": {
         "Create_CSV_-_Area_endpoint_sets": ["Succeeded"]
       }
+    }    ,
+    "HTTP_-_Put_the_area_JSON_blob": {
+      "description": "Writes m365/<area>.json: the endpoint sets exactly as Microsoft publishes them, full fidelity (proper ips, urls, and port arrays).",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/m365/@{items('${self_name}')}.json",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "application/json"
+        },
+        "body": "@body('Filter_-_Endpoint_sets_for_this_area')",
+        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
+        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+      },
+      "runAfter": {
+        "HTTP_-_Put_the_area_CSV_blob": ["Succeeded"]
+      }
     }
+
   }
 }

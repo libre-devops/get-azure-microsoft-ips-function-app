@@ -50,6 +50,26 @@
       "runAfter": {
         "Create_CSV_-_Tag_address_prefixes": ["Succeeded"]
       }
+    }    ,
+    "HTTP_-_Put_the_tag_JSON_blob": {
+      "description": "Writes azure-service-tags/<tag>.json: the raw prefix array, source-shaped.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}.json",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "application/json"
+        },
+        "body": "@coalesce(first(body('Filter_-_The_requested_tag'))?['properties']?['addressPrefixes'], json('[]'))",
+        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
+        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+      },
+      "runAfter": {
+        "HTTP_-_Put_the_tag_CSV_blob": ["Succeeded"]
+      }
     }
+
   }
 }

@@ -18,6 +18,10 @@ locals {
   container = "ip-feeds"
 
   custom_role_name = "Service Tag Reader (${var.short}-${var.loc}-${var.env})"
+
+  # The map keyed by feed name flattens to an array for the workflow parameter; the key becomes the
+  # blob name (custom/<name>.csv).
+  custom_feeds_list = [for k, v in var.custom_feeds : merge(v, { name = k })]
 }
 
 data "azurerm_subscription" "current" {}
@@ -114,6 +118,11 @@ module "logic_app_workflow" {
           type        = "Array"
           value       = jsonencode(var.github_ip_groups)
           description = "GitHub meta IP groups that each get their own CSV (actions = hosted runners)."
+        }
+        custom_feeds = {
+          type        = "Array"
+          value       = jsonencode(local.custom_feeds_list)
+          description = "Out-of-band feeds: url, collection, optional value_property/filter/headers per entry."
         }
       }
     }
@@ -281,5 +290,15 @@ resource "azurerm_logic_app_action_custom" "publish_github_csvs" {
   body = templatefile("${path.module}/templates/publish-github-ip-csvs.json.tftpl", {
     self_name       = "For_each_-_Publish_a_CSV_per_GitHub_ip_group"
     get_meta_action = azurerm_logic_app_action_custom.get_github_meta.name
+  })
+}
+
+resource "azurerm_logic_app_action_custom" "publish_custom_feed_csvs" {
+  name         = "For_each_-_Publish_a_CSV_per_custom_feed"
+  logic_app_id = module.logic_app_workflow.ids[local.wf_name]
+
+  body = templatefile("${path.module}/templates/publish-custom-feed-csvs.json.tftpl", {
+    self_name        = "For_each_-_Publish_a_CSV_per_custom_feed"
+    run_after_action = azurerm_logic_app_action_custom.publish_github_csvs.name
   })
 }
