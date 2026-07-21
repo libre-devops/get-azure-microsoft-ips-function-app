@@ -1,3 +1,15 @@
+variable "cost_centre" {
+  description = "Cost centre tag applied to everything. Replace the placeholder with yours."
+  type        = string
+  default     = "1888/67"
+}
+
+variable "owner" {
+  description = "Owner tag applied to everything: the person or team accountable for the deployment. Replace the placeholder with yours."
+  type        = string
+  default     = "craig@craigthacker.dev"
+}
+
 variable "custom_feeds" {
   description = <<-EOT
     The out-of-band extension point: any public JSON feed of IP ranges becomes its own CSV at

@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (gitignored) and make it yours. Everything has a sensible default, so
+# only set what differs for you.
+
+owner       = "craig@craigthacker.dev"
+cost_centre = "1888/67"
+
+# The out-of-band extension point: any public JSON feed of IP ranges. See the README for the
+# field semantics; these entries are live-verified.
+custom_feeds = {
+  aws-all = {
+    url            = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+    collection     = "prefixes"
+    value_property = "ip_prefix"
+  }
+  aws-all-v6 = {
+    url            = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+    collection     = "ipv6_prefixes"
+    value_property = "ipv6_prefix"
+  }
+  zscaler-hub = {
+    url        = "https://config.zscaler.com/api/zscaler.net/hubs/cidr/json/recommended"
+    collection = "hubPrefixes"
+  }
+}
