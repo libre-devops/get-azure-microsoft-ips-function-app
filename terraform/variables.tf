@@ -10,6 +10,12 @@ variable "env" {
   default     = "dev"
 }
 
+variable "github_ip_groups" {
+  description = "GitHub IP range groups from api.github.com/meta that each get their own CSV: actions (hosted runners), hooks, web, api, git, packages, pages, codespaces, copilot, and friends. Empty list disables the GitHub source."
+  type        = list(string)
+  default     = ["actions"]
+}
+
 variable "loc" {
   description = "Outfix: short Azure region code used in resource names."
   type        = string

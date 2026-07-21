@@ -1,0 +1,44 @@
+{
+  "description": "One CSV per requested GitHub IP group: index the meta payload by the group name and turn its CIDR list into rows. An unknown group name produces an empty CSV rather than a failed run.",
+  "type": "Foreach",
+  "foreach": "@parameters('github_ip_groups')",
+  "runtimeConfiguration": {
+    "concurrency": { "repetitions": 1 }
+  },
+  "runAfter": {
+    "${get_meta_action}": ["Succeeded"]
+  },
+  "actions": {
+    "Create_CSV_-_Group_ip_ranges": {
+      "description": "The group's CIDR ranges (IPv4 and IPv6) as one CSV row each.",
+      "type": "Table",
+      "inputs": {
+        "from": "@coalesce(body('${get_meta_action}')?[items('${self_name}')], json('[]'))",
+        "format": "CSV",
+        "columns": [
+          { "header": "Cidr", "value": "@item()" }
+        ]
+      },
+      "runAfter": {}
+    },
+    "HTTP_-_Put_the_group_CSV_blob": {
+      "description": "Writes github/<group>.csv, overwriting last week's feed.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/github/@{items('${self_name}')}.csv",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "text/csv"
+        },
+        "body": "@body('Create_CSV_-_Group_ip_ranges')",
+        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
+        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+      },
+      "runAfter": {
+        "Create_CSV_-_Group_ip_ranges": ["Succeeded"]
+      }
+    }
+  }
+}

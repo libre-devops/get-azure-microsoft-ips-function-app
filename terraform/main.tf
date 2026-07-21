@@ -110,6 +110,11 @@ module "logic_app_workflow" {
           value       = jsonencode(var.m365_service_areas)
           description = "Microsoft 365 service areas that each get their own CSV of endpoint sets."
         }
+        github_ip_groups = {
+          type        = "Array"
+          value       = jsonencode(var.github_ip_groups)
+          description = "GitHub meta IP groups that each get their own CSV (actions = hosted runners)."
+        }
       }
     }
   }
@@ -244,5 +249,37 @@ resource "azurerm_logic_app_action_custom" "publish_m365_csvs" {
   body = templatefile("${path.module}/templates/publish-m365-area-csvs.json.tftpl", {
     self_name            = "For_each_-_Publish_a_CSV_per_M365_service_area"
     get_endpoints_action = azurerm_logic_app_action_custom.get_m365_endpoints.name
+  })
+}
+
+resource "azurerm_logic_app_action_custom" "get_github_meta" {
+  name         = "HTTP_-_Get_the_GitHub_ip_ranges"
+  logic_app_id = module.logic_app_workflow.ids[local.wf_name]
+
+  body = jsonencode({
+    description = "GitHub's published IP ranges from api.github.com/meta (anonymous; the User-Agent header is mandatory or GitHub returns 403). actions is the hosted runner set and changes with no fixed cadence."
+    type        = "Http"
+    inputs = {
+      method = "GET"
+      uri    = "https://api.github.com/meta"
+      headers = {
+        "User-Agent" = "libre-devops-ip-feeds"
+        Accept       = "application/vnd.github+json"
+      }
+      retryPolicy = { type = "fixed", count = 3, interval = "PT30S" }
+    }
+    runAfter = {
+      (azurerm_logic_app_action_custom.publish_m365_csvs.name) = ["Succeeded"]
+    }
+  })
+}
+
+resource "azurerm_logic_app_action_custom" "publish_github_csvs" {
+  name         = "For_each_-_Publish_a_CSV_per_GitHub_ip_group"
+  logic_app_id = module.logic_app_workflow.ids[local.wf_name]
+
+  body = templatefile("${path.module}/templates/publish-github-ip-csvs.json.tftpl", {
+    self_name       = "For_each_-_Publish_a_CSV_per_GitHub_ip_group"
+    get_meta_action = azurerm_logic_app_action_custom.get_github_meta.name
   })
 }

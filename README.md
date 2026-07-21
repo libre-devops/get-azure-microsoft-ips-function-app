@@ -34,8 +34,15 @@ system-assigned managed identity and no secrets anywhere:
   design). Every service area in `var.m365_service_areas` gets its own CSV at `m365/<area>.csv`,
   one row per endpoint set with the ips and urls collections semicolon-joined so Microsoft's
   grouping (and the ports and required flags) survive the flattening.
+- **GitHub IP ranges** come from `api.github.com/meta` (anonymous, mandatory User-Agent). Every
+  group in `var.github_ip_groups` gets its own CSV at `github/<group>.csv`; `actions` (the hosted
+  runner set, roughly seven thousand CIDRs) is the default, and `hooks`, `web`, `api`, `git`,
+  `packages`, `pages`, `codespaces`, `copilot`, and friends all work.
 
-The workflow runs every Monday at 06:00 UTC and overwrites last week's feeds. CSVs land in blob
+The workflow runs every Monday at 06:00 UTC and overwrites last week's feeds. The cadence matches
+the sources: Azure service tags publish weekly, the M365 endpoint sets version monthly (start of
+month, occasional out-of-band changes), and GitHub's ranges change with no fixed cadence, so a
+weekly floor keeps everything at most a few days stale. CSVs land in blob
 storage; an Azure Table variant would slot in beside the blob writes if row-level querying ever
 earns its keep.
 
@@ -71,3 +78,7 @@ then browse the container from the `container_url` output.
   each becomes its own CSV. A tag the API does not know produces an empty CSV rather than a failed run.
 - `m365_service_areas`: any of `Common`, `Exchange`, `SharePoint`, `Skype`.
 - `m365_instance`: `Worldwide` by default; the sovereign instances work too.
+- `github_ip_groups`: any key of `api.github.com/meta` that holds CIDR ranges; an empty list
+  disables the GitHub source. Adding a whole new SOURCE (some other vendor's feed) follows the
+  same shape: one fetch action plus one foreach template, which is exactly how the GitHub source
+  was added.
