@@ -1,37 +1,73 @@
-# Intro
+<div align="center">
+  <a href="https://libredevops.org">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://libredevops.org/assets/libre-devops-white.png">
+      <img alt="Libre DevOps" src="https://libredevops.org/assets/libre-devops-black.png" width="300">
+    </picture>
+  </a>
+</div>
 
-Hello :wave:
+# Get Azure and Microsoft public IPs
 
-This repo is a fork from the original creator [groovy-sky](https://github.com/groovy-sky/azure-office-ip)
+A weekly Logic App that publishes Microsoft's public IP feeds as one CSV per source into a private
+storage container: Azure service tags (Azure itself, Azure DevOps, Azure Virtual Desktop, Defender
+for Endpoint by default, any tag works) and the Microsoft 365 endpoint sets per service area.
 
-The fork aims to add some functionality to the app, as well as integrate it with some CI/CD, terraform and other bits and bobes.
+[![CI](https://github.com/libre-devops/get-azure-microsoft-ips-function-app/actions/workflows/ci.yml/badge.svg)](https://github.com/libre-devops/get-azure-microsoft-ips-function-app/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/libre-devops/get-azure-microsoft-ips-function-app)](./LICENSE)
 
-## What this Python Function App does
+---
 
-This repo hosts all the code and the mechanisms to deploy a Linux Azure Function App into the Libre DevOps tenant.
+## Overview
 
-- Build function app and needed resources using terraform
-- Debug locally with a simplified script
-- Deploy code via Azure Pipelines
+This repo used to be a Python Azure Function App (a fork of
+[groovy-sky/azure-office-ip](https://github.com/groovy-sky/azure-office-ip); that whole world is
+preserved in the [`legacy`](../../tree/legacy) tag). It is now a single Terraform stack, built from
+the Libre DevOps registry modules, deploying one consumption Logic App workflow with a
+system-assigned managed identity and no secrets anywhere:
 
-The function itself is a Timer function, which, every 5 hours will fetch a list of IPs and add them to a convenient format inside a storage account created with terraform.
+- **Azure service tags** come from the ARM Service Tag Discovery API, called with the workflow's
+  identity. Every tag in `var.service_tags` gets its own CSV of address prefixes (IPv4 and IPv6) at
+  `azure-service-tags/<tag>.csv`. Any tag the discovery API knows is fair game; the defaults cover
+  `AzureCloud`, `AzureDevOps`, `WindowsVirtualDesktop`, and `MicrosoftDefenderForEndpoint`.
+- **Microsoft 365 endpoint sets** come from the endpoints.office.com web service (anonymous by
+  design). Every service area in `var.m365_service_areas` gets its own CSV at `m365/<area>.csv`,
+  one row per endpoint set with the ips and urls collections semicolon-joined so Microsoft's
+  grouping (and the ports and required flags) survive the flattening.
 
-There are 2 functions:
-- `Get-ClientIps` 
-- `Get-ClientUrls`.  
+The workflow runs every Monday at 06:00 UTC and overwrites last week's feeds. CSVs land in blob
+storage; an Azure Table variant would slot in beside the blob writes if row-level querying ever
+earns its keep.
 
-These functions do what they say in the tin, one fetches a list of IPs object from the [Office365 API](https://endpoints.office.com/endpoints/worldwide) and the other does the exact same, except gets the `urls` property as well.
+The identity plumbing dogfoods the estate deliberately:
 
-These are then outputted to a blob container called `$web`
+- a **custom role definition** carrying only `Microsoft.Network/locations/serviceTags/read`,
+  defined and assigned in one call by the `role-assignment` module (no Reader over-grant);
+- **Storage Blob Data Contributor** scoped to the one account;
+- the account firewall attached by the `storage-account-network-rules` module: deny by default,
+  AzureServices bypass, and a **resource instance rule** admitting exactly this workflow, so the
+  account never opens to the world for the sake of the writer.
 
-## Building the environment
+## Deploy
 
-At the time of writing, this project only supports Azure DevOps continuous integration and is setup to deploy using some expected items in the Libre DevOps Azure DevOps instance.
+```bash
+cd terraform
+az login
+export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+terraform init
+terraform apply
+```
 
-You can freely use the modules used to deploy these resources as well as the pipeline templates, but setting up the bits in between will be up to you.
+The stack includes the role definition and role assignments, so the applier needs to be able to
+write those at subscription scope (Owner). State is local and gitignored; this is a
+personal-tenant stack, not a shared pipeline.
 
-### Terraform Build
-- 1x Resource Group
-- 1x Linux Function app on Consumption Service Plan with Python 3.9 Application Stack (up to date with the v3 Azurerm provider changes in terraform)
-- 1x Storage Account, Hot access tier
-- 1x Blob container with blob (anonymous access) for the URLs
+Run it immediately instead of waiting for Monday with the command in the `run_now_command` output,
+then browse the container from the `container_url` output.
+
+## Tuning
+
+- `service_tags`: add any service tag (for example `Storage.uksouth`, `Sql`, `AzureFrontDoor.Backend`);
+  each becomes its own CSV. A tag the API does not know produces an empty CSV rather than a failed run.
+- `m365_service_areas`: any of `Common`, `Exchange`, `SharePoint`, `Skype`.
+- `m365_instance`: `Worldwide` by default; the sovereign instances work too.

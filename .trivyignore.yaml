@@ -1,0 +1,20 @@
+# Trivy scan waivers for this stack, passed via TRIVY_IGNOREFILE in CI.
+#
+# Only waive a finding with a real, defensible reason; HIGH/CRITICAL is otherwise merge-blocking.
+
+misconfigurations:
+  # The storage account intentionally carries no inline network_rules block (storage-account
+  # manage_network_rules = false) because the firewall is attached by the
+  # storage-account-network-rules module in the same stack: deny by default, AzureServices bypass,
+  # and a resource instance rule admitting exactly the workflow. Trivy cannot evaluate the
+  # for_each-driven dynamic block or connect the standalone attachment, so it reports the account
+  # as open when the applied stack is deny-by-default.
+  - id: AVD-AZU-0012
+    paths:
+      - "**/.terraform/modules/storage/main.tf"
+      - "**/terraform/**"
+    statement: >-
+      The deny-by-default firewall for this account is attached by the storage-account-network-rules
+      module in the same stack, including the resource instance rule that admits the workflow; the
+      account intentionally carries no inline network_rules block because Azure allows only one rule
+      set per account.

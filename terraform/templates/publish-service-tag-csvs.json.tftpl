@@ -1,0 +1,55 @@
+{
+  "description": "One CSV per requested service tag: filter the discovery payload to the tag, turn its address prefixes into rows, and PUT the blob with the workflow's identity. Sequential to keep run history readable.",
+  "type": "Foreach",
+  "foreach": "@parameters('service_tags')",
+  "runtimeConfiguration": {
+    "concurrency": { "repetitions": 1 }
+  },
+  "runAfter": {
+    "${get_service_tags_action}": ["Succeeded"]
+  },
+  "actions": {
+    "Filter_-_The_requested_tag": {
+      "description": "The discovery payload entry whose name matches this tag; empty when the tag does not exist, which the coalesce below turns into an empty CSV rather than a failed run.",
+      "type": "Query",
+      "inputs": {
+        "from": "@body('${get_service_tags_action}')?['values']",
+        "where": "@equals(item()?['name'], items('${self_name}'))"
+      },
+      "runAfter": {}
+    },
+    "Create_CSV_-_Tag_address_prefixes": {
+      "description": "The tag's address prefixes (IPv4 and IPv6) as one CSV row each.",
+      "type": "Table",
+      "inputs": {
+        "from": "@coalesce(first(body('Filter_-_The_requested_tag'))?['properties']?['addressPrefixes'], json('[]'))",
+        "format": "CSV",
+        "columns": [
+          { "header": "AddressPrefix", "value": "@item()" }
+        ]
+      },
+      "runAfter": {
+        "Filter_-_The_requested_tag": ["Succeeded"]
+      }
+    },
+    "HTTP_-_Put_the_tag_CSV_blob": {
+      "description": "Writes azure-service-tags/<tag>.csv, overwriting last week's feed. The account firewall admits this workflow through its resource instance rule.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/azure-service-tags/@{items('${self_name}')}.csv",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "text/csv"
+        },
+        "body": "@body('Create_CSV_-_Tag_address_prefixes')",
+        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
+        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+      },
+      "runAfter": {
+        "Create_CSV_-_Tag_address_prefixes": ["Succeeded"]
+      }
+    }
+  }
+}

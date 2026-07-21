@@ -1,0 +1,61 @@
+{
+  "description": "One CSV per M365 service area: filter the endpoint sets to the area and write one row per endpoint set, with the ips and urls collections semicolon-joined inside their columns so the grouping Microsoft publishes is preserved.",
+  "type": "Foreach",
+  "foreach": "@parameters('m365_service_areas')",
+  "runtimeConfiguration": {
+    "concurrency": { "repetitions": 1 }
+  },
+  "runAfter": {
+    "${get_endpoints_action}": ["Succeeded"]
+  },
+  "actions": {
+    "Filter_-_Endpoint_sets_for_this_area": {
+      "description": "The endpoint sets belonging to this service area.",
+      "type": "Query",
+      "inputs": {
+        "from": "@body('${get_endpoints_action}')",
+        "where": "@equals(item()?['serviceArea'], items('${self_name}'))"
+      },
+      "runAfter": {}
+    },
+    "Create_CSV_-_Area_endpoint_sets": {
+      "description": "One row per endpoint set: id, category, required flag, ips, urls, and ports.",
+      "type": "Table",
+      "inputs": {
+        "from": "@body('Filter_-_Endpoint_sets_for_this_area')",
+        "format": "CSV",
+        "columns": [
+          { "header": "Id", "value": "@item()?['id']" },
+          { "header": "Category", "value": "@item()?['category']" },
+          { "header": "Required", "value": "@item()?['required']" },
+          { "header": "Ips", "value": "@join(coalesce(item()?['ips'], json('[]')), ';')" },
+          { "header": "Urls", "value": "@join(coalesce(item()?['urls'], json('[]')), ';')" },
+          { "header": "TcpPorts", "value": "@coalesce(item()?['tcpPorts'], '')" },
+          { "header": "UdpPorts", "value": "@coalesce(item()?['udpPorts'], '')" }
+        ]
+      },
+      "runAfter": {
+        "Filter_-_Endpoint_sets_for_this_area": ["Succeeded"]
+      }
+    },
+    "HTTP_-_Put_the_area_CSV_blob": {
+      "description": "Writes m365/<service area>.csv, overwriting last week's feed.",
+      "type": "Http",
+      "inputs": {
+        "method": "PUT",
+        "uri": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('container_name')}/m365/@{items('${self_name}')}.csv",
+        "headers": {
+          "x-ms-blob-type": "BlockBlob",
+          "x-ms-version": "2021-08-06",
+          "Content-Type": "text/csv"
+        },
+        "body": "@body('Create_CSV_-_Area_endpoint_sets')",
+        "authentication": { "type": "ManagedServiceIdentity", "audience": "https://storage.azure.com/" },
+        "retryPolicy": { "type": "fixed", "count": 3, "interval": "PT30S" }
+      },
+      "runAfter": {
+        "Create_CSV_-_Area_endpoint_sets": ["Succeeded"]
+      }
+    }
+  }
+}
