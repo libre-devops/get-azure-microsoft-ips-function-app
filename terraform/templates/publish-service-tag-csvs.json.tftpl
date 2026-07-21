@@ -10,11 +10,11 @@
   },
   "actions": {
     "Filter_-_The_requested_tag": {
-      "description": "The discovery payload entry whose name matches this tag; empty when the tag does not exist, which the coalesce below turns into an empty CSV rather than a failed run.",
+      "description": "The discovery payload entry whose name matches this tag, case-insensitively: regional tag casing is inconsistent across families (AzureCloud.uksouth but Storage.UKSouth), so exact matching would silently miss. Empty when the tag does not exist, which the coalesce below turns into an empty CSV rather than a failed run.",
       "type": "Query",
       "inputs": {
         "from": "@body('${get_service_tags_action}')?['values']",
-        "where": "@equals(item()?['name'], items('${self_name}'))"
+        "where": "@equals(toLower(item()?['name']), toLower(items('${self_name}')))"
       },
       "runAfter": {}
     },

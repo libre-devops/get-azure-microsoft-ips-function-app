@@ -38,6 +38,16 @@ system-assigned managed identity and no secrets anywhere:
   group in `var.github_ip_groups` gets its own CSV at `github/<group>.csv`; `actions` (the hosted
   runner set, roughly seven thousand CIDRs) is the default, and `hooks`, `web`, `api`, `git`,
   `packages`, `pages`, `codespaces`, `copilot`, and friends all work.
+- **Any other public JSON feed** via `var.custom_feeds`, the out-of-band extension point: each
+  entry names a url, the payload property holding the array, and (for object arrays) which field
+  is the CIDR plus an optional filter. Every entry lands at `custom/<key>.csv` and `.json`.
+
+Every feed is written twice: `<name>.csv` (flattened, one value per row) and `<name>.json`
+(source-shaped, full fidelity; the M365 JSON keeps the proper ips, urls, and port arrays the CSV
+has to semicolon-join). Azure **Table storage is deliberately not offered**: tables have no bulk
+write, so a weekly run would mean tens of thousands of sequential entity inserts (AzureCloud alone
+is ~15,000 prefixes) for a row-query capability IP-feed consumers rarely want; if row-level
+querying ever matters, ingest the blobs into Log Analytics or ADX instead.
 
 The workflow runs every Monday at 06:00 UTC and overwrites last week's feeds. The cadence matches
 the sources: Azure service tags publish weekly, the M365 endpoint sets version monthly (start of
@@ -74,11 +84,42 @@ then browse the container from the `container_url` output.
 
 ## Tuning
 
-- `service_tags`: add any service tag (for example `Storage.uksouth`, `Sql`, `AzureFrontDoor.Backend`);
-  each becomes its own CSV. A tag the API does not know produces an empty CSV rather than a failed run.
+- `service_tags`: add any service tag, including regional variants (`AzureCloud.uksouth`,
+  `Storage.UKSouth`, `Sql`, `AzureFrontDoor.Backend`); each becomes its own CSV and JSON. Matching
+  is case-insensitive on purpose: Microsoft's regional casing is inconsistent across families
+  (`AzureCloud.uksouth` but `Storage.UKSouth`), and exact matching would silently miss. A tag the
+  API does not know produces an empty file rather than a failed run.
+- A correctness note from validating the feeds: the well-known `13.107.6.0/24` and `13.107.9.0/24`
+  Azure DevOps blocks are NOT in the `AzureDevOps` service tag; dev.azure.com rides the Microsoft
+  365 edge, and those ranges arrive through the M365 `Common` and `Exchange` feeds this stack also
+  publishes. Take the tag plus the M365 feeds together for complete DevOps coverage.
 - `m365_service_areas`: any of `Common`, `Exchange`, `SharePoint`, `Skype`.
 - `m365_instance`: `Worldwide` by default; the sovereign instances work too.
 - `github_ip_groups`: any key of `api.github.com/meta` that holds CIDR ranges; an empty list
-  disables the GitHub source. Adding a whole new SOURCE (some other vendor's feed) follows the
-  same shape: one fetch action plus one foreach template, which is exactly how the GitHub source
-  was added.
+  disables the GitHub source.
+- `custom_feeds`: the extension point, no code required. Ready-made entries, shapes verified
+  against the live feeds:
+
+  ```hcl
+  custom_feeds = {
+    # AWS, everything (10,000+ prefixes) and a per-service slice
+    aws-all = {
+      url            = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+      collection     = "prefixes"
+      value_property = "ip_prefix"
+    }
+    aws-ec2 = {
+      url             = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+      collection      = "prefixes"
+      value_property  = "ip_prefix"
+      filter_property = "service"
+      filter_equals   = "EC2"
+    }
+
+    # Zscaler recommended hub ranges (swap zscaler.net for your cloud: zscalertwo.net, zscloud.net ...)
+    zscaler-hub = {
+      url        = "https://config.zscaler.com/api/zscaler.net/hubs/cidr/json/recommended"
+      collection = "hubPrefixes"
+    }
+  }
+  ```
