@@ -171,10 +171,11 @@ module "role_assignment" {
 
   role_assignments = {
     feed-reader-deployer = {
-      scope                            = module.storage.ids[local.sa_name]
-      principal_ids                    = [data.azurerm_client_config.current.object_id]
-      role_names                       = ["Storage Blob Data Reader"]
-      skip_service_principal_aad_check = true
+      # A user principal: skip_service_principal_aad_check must stay off here, since the provider
+      # sends principalType ServicePrincipal whenever it is set (caught live).
+      scope         = module.storage.ids[local.sa_name]
+      principal_ids = [data.azurerm_client_config.current.object_id]
+      role_names    = ["Storage Blob Data Reader"]
     }
     service-tag-reader = {
       scope                            = data.azurerm_subscription.current.id
