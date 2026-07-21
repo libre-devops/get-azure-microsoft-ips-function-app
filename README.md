@@ -56,6 +56,13 @@ weekly floor keeps everything at most a few days stale. CSVs land in blob
 storage; an Azure Table variant would slot in beside the blob writes if row-level querying ever
 earns its keep.
 
+**No storage keys, no SAS, anywhere, enforced**: every Graph-of-storage byte moves under Entra ID.
+The workflow authenticates its blob writes with its managed identity (`ManagedServiceIdentity`
+authentication on the HTTP actions; there is no connection string or SAS token in any action, and
+nothing to rotate or leak), and the account itself has `shared_access_key_enabled = false`, so
+key-based access is impossible rather than merely unused. Humans read the feeds through RBAC (the
+deployer gets Storage Blob Data Reader): `az storage blob list --auth-mode login ...`.
+
 The identity plumbing dogfoods the estate deliberately:
 
 - a **custom role definition** carrying only `Microsoft.Network/locations/serviceTags/read`,

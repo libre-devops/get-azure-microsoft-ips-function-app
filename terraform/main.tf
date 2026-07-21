@@ -56,6 +56,10 @@ module "storage" {
   storage_accounts = {
     (local.sa_name) = {
       manage_network_rules = false
+      # No keys, enforced rather than aspirational: the workflow writes with its managed identity,
+      # humans read via Entra RBAC, and nothing can fall back to a shared key or SAS.
+      shared_access_key_enabled       = false
+      default_to_oauth_authentication = true
     }
   }
 }
@@ -164,6 +168,12 @@ module "role_assignment" {
   }
 
   role_assignments = {
+    feed-reader-deployer = {
+      scope                            = module.storage.ids[local.sa_name]
+      principal_ids                    = [data.azurerm_client_config.current.object_id]
+      role_names                       = ["Storage Blob Data Reader"]
+      skip_service_principal_aad_check = true
+    }
     service-tag-reader = {
       scope                            = data.azurerm_subscription.current.id
       principal_ids                    = [module.logic_app_workflow.identities[local.wf_name].principal_id]
