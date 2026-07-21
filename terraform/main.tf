@@ -26,6 +26,8 @@ locals {
 
 data "azurerm_subscription" "current" {}
 
+data "azurerm_client_config" "current" {}
+
 module "tags" {
   source  = "libre-devops/tags/azurerm"
   version = "~> 4.0"
