@@ -13,8 +13,8 @@ A weekly Logic App that publishes Microsoft's public IP feeds as one CSV per sou
 storage container: Azure service tags (Azure itself, Azure DevOps, Azure Virtual Desktop, Defender
 for Endpoint by default, any tag works) and the Microsoft 365 endpoint sets per service area.
 
-[![CI](https://github.com/libre-devops/get-azure-microsoft-ips-function-app/actions/workflows/ci.yml/badge.svg)](https://github.com/libre-devops/get-azure-microsoft-ips-function-app/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/libre-devops/get-azure-microsoft-ips-function-app)](./LICENSE)
+[![CI](https://github.com/libre-devops/get-azure-microsoft-ips/actions/workflows/ci.yml/badge.svg)](https://github.com/libre-devops/get-azure-microsoft-ips/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/libre-devops/get-azure-microsoft-ips)](./LICENSE)
 
 ---
 
